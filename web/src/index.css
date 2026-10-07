@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Literata", ui-serif, Georgia, serif;
+  --color-paper: #f3efe6;
+  --color-paper-raised: #fbf8f2;
+  --color-ink: #1c1916;
+  --color-muted: #6b645a;
+  --color-line: #e4dccb;
+  --color-rail: #141210;
+  --color-rail-soft: #2a2622;
+  --color-accent: #0e6b66;
+  --color-accent-soft: #e4f2f0;
+  --color-danger: #8f3d32;
+  --color-danger-soft: #f8ebe8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d9d0c0 transparent;
+}
+
+textarea,
+input {
+  font-size: 16px;
+}

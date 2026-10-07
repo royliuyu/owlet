@@ -1,0 +1,82 @@
+[project]
+name = "owlet"
+version = "0.1.0"
+description = "Local-first personal second brain"
+readme = "docs/IMPLEMENTATION_PLAN.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "keyring",
+    "pydantic",
+    "pydantic-settings",
+    "pymupdf",
+    "python-docx",
+    "pyyaml",
+    "sqlite-vec",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx",
+    "pytest",
+    "ruff",
+]
+# Separate: import-linter pulls a recent `rich`, which clashes with some
+# ML environments. Run the layering check where that is not a problem.
+lint = [
+    "import-linter",
+]
+
+[project.scripts]
+owlet = "core.interfaces.http.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.importlinter]
+root_package = "core"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "分层：依赖只能向下"
+type = "layers"
+layers = [
+    "core.interfaces",
+    "core.retrieval",
+    "core.ingestion",
+    "core.connectors",
+    "core.store",
+    "core.llm",
+    "core.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "domain 不依赖任何框架"
+type = "forbidden"
+source_modules = ["core.domain"]
+forbidden_modules = [
+    "fastapi",
+    "langchain",
+    "langgraph",
+    "chromadb",
+    "openai",
+    "sqlite3",
+]

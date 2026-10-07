@@ -1,0 +1,46 @@
+# ── 可变数据（绝不入库）───────────────────────────────
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# ── 本地配置与凭证 ───────────────────────────────────
+config/local.yaml
+.env
+.env.local
+*.pem
+token.json
+credentials.json
+/note.md
+
+# ── 工具缓存 ─────────────────────────────────────────
+.import_linter_cache/
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ── 前端 ────────────────────────────────────────────
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# ── 编辑器 / 系统 ───────────────────────────────────
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
