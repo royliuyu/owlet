@@ -2,7 +2,7 @@
 name = "owlet"
 version = "0.1.0"
 description = "Local-first personal second brain"
-readme = "docs/IMPLEMENTATION_PLAN.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi",
@@ -56,7 +56,7 @@ root_package = "core"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "分层：依赖只能向下"
+name = "Layers: dependencies may only point downward"
 type = "layers"
 layers = [
     "core.interfaces",
@@ -69,7 +69,7 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "domain 不依赖任何框架"
+name = "domain depends on no frameworks"
 type = "forbidden"
 source_modules = ["core.domain"]
 forbidden_modules = [

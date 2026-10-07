@@ -1,17 +1,17 @@
-# 提交到仓库的默认配置。本机覆盖写在 config/local.yaml（不入库）。
-# 相对路径从仓库根解析，不依赖启动时的工作目录。
+# Default config committed to the repo. Local overrides go in config/local.yaml (not committed).
+# Relative paths resolve from the repo root, not from the process working directory.
 #
-# 这里只放启动参数。要读哪些文件夹属于用户数据，存在
-# <data_dir>/metadata.db 的 sources 表里，在 Settings 页面增删。
+# Only startup settings belong here. Which folders to read is user data, stored in
+# the sources table of <data_dir>/metadata.db and added or removed on the Settings page.
 
 data_dir: data
 auth_token: ""
 host: 127.0.0.1
 port: 8000
 
-# Google 登录。client id 可为空；secret 用环境变量 OWLET_GOOGLE__CLIENT_SECRET。
-# redirect_origins 是逗号分隔的额外 origin（以后的云端 https 主机）。
-# 本机 http://127.0.0.1:<port> 与 http://localhost:<port> 始终允许，不必写在这里。
+# Google sign-in. client id may be empty; the secret comes from OWLET_GOOGLE__CLIENT_SECRET.
+# redirect_origins is a comma-separated list of extra origins (a future cloud https host).
+# Local http://127.0.0.1:<port> and http://localhost:<port> are always allowed, so they do not belong here.
 google:
   client_id: ""
   client_secret: ""

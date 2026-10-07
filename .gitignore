@@ -1,10 +1,10 @@
-# ── 可变数据（绝不入库）───────────────────────────────
+# ── Mutable data (never commit) ──────────────────────
 data/
 *.db
 *.db-wal
 *.db-shm
 
-# ── 本地配置与凭证 ───────────────────────────────────
+# ── Local config and credentials ─────────────────────
 config/local.yaml
 .env
 .env.local
@@ -12,8 +12,9 @@ config/local.yaml
 token.json
 credentials.json
 /note.md
+docs/IMPLEMENTATION_PLAN.md
 
-# ── 工具缓存 ─────────────────────────────────────────
+# ── Tool caches ──────────────────────────────────────
 .import_linter_cache/
 
 # ── Python ──────────────────────────────────────────
@@ -32,13 +33,13 @@ venv/
 .coverage
 htmlcov/
 
-# ── 前端 ────────────────────────────────────────────
+# ── Frontend ─────────────────────────────────────────
 node_modules/
 web/dist/
 web/.vite/
 *.tsbuildinfo
 
-# ── 编辑器 / 系统 ───────────────────────────────────
+# ── Editor / system ──────────────────────────────────
 .idea/
 .vscode/*
 !.vscode/extensions.json
