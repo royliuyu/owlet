@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from core.config import RetrievalSettings
 from core.domain.models import Chunk
 from core.llm import EmbeddingClient
-from core.retrieval.phrase import anchors, contains_anchor, matching, probes
-from core.store import DocumentStore, VectorStore
+from core.retrieval.phrase import contains_anchor, contains_count, matching, probes
+from core.retrieval.understand import ProbeParser, QueryPlan, fallback_plan
+from core.store import DocumentStore, ScoredChunk, VectorStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,11 +42,13 @@ class Retriever:
         vectors: VectorStore,
         embedder: EmbeddingClient,
         settings: RetrievalSettings,
+        parser: ProbeParser | None = None,
     ) -> None:
         self._documents = documents
         self._vectors = vectors
         self._embedder = embedder
         self._settings = settings
+        self._parser = parser
 
     async def search(
         self,
@@ -56,32 +59,16 @@ class Retriever:
         top_k: int | None = None,
     ) -> list[Retrieved]:
         wanted = top_k or self._settings.top_k
-        keyword = self._documents.search_fulltext(
-            question, limit=self._settings.bm25_k, sources=sources, doc_ids=doc_ids
+        plan = await self._plan(question)
+        keyword_ranks, pool, from_probe = self._keywords(
+            plan.probes, sources=sources, doc_ids=doc_ids
         )
-        keyword_ranks = {hit.chunk.id: rank for rank, hit in enumerate(keyword, start=1)}
-        pool: dict[str, Chunk] = {hit.chunk.id: hit.chunk for hit in keyword}
+        if plan.counts and plan.literal is None:
+            self._counts_into(plan.counts, keyword_ranks, pool, sources=sources, doc_ids=doc_ids)
 
-        vector_ranks: dict[str, int] = {}
-        embedded: list[list[float]] = []
-        if self._documents.stats()["embedded"]:
-            try:
-                embedded = await self._embedder.embed([question])
-            except Exception:
-                embedded = []  # model host down; keyword results still stand
-        if embedded:
-            if doc_ids:
-                allowed: list[str] = []
-                for doc_id in doc_ids:
-                    allowed.extend(self._documents.chunk_ids_for(doc_id))
-                hits = self._vectors.search_among(
-                    embedded[0], allowed, limit=self._settings.vector_k
-                )
-            else:
-                hits = self._vectors.search(embedded[0], limit=self._settings.vector_k)
-            vector_ranks = {hit.chunk_id: rank for rank, hit in enumerate(hits, start=1)}
-            missing = [hit.chunk_id for hit in hits if hit.chunk_id not in pool]
-            pool.update(self._documents.chunks_by_id(missing))
+        vector_ranks = await self._vectors_for(
+            plan.probes, pool, from_probe, sources=sources, doc_ids=doc_ids
+        )
 
         fused: list[Retrieved] = []
         for chunk_id, chunk in pool.items():
@@ -102,11 +89,18 @@ class Retriever:
                     vector_rank=vector_rank,
                 )
             )
-        fused.sort(key=lambda item: (-item.score, item.chunk.doc_id, item.chunk.ord))
+        fused.sort(
+            key=lambda item: (
+                _tier(item, plan, from_probe),
+                -item.score,
+                item.chunk.doc_id,
+                item.chunk.ord,
+            )
+        )
         ranked = _diversify(fused, wanted, self._settings.per_doc_k)
-        needles = anchors(question)
-        if not needles:
+        if not plan.literal:
             return ranked
+        needles = (plan.literal,)
         found = matching(
             self._documents.chunks_containing(
                 probes(needles),
@@ -117,6 +111,91 @@ class Retriever:
             needles,
         )
         return _order_with_anchor(ranked, found, needles, wanted)
+
+    async def _plan(self, question: str) -> QueryPlan:
+        plan = fallback_plan(question)
+        if plan.literal is not None or self._parser is None:
+            return plan
+        try:
+            titles = [paper.title for paper in self._documents.papers()]
+            extra = await self._parser.probes(question, titles=titles)
+        except Exception:
+            return plan
+        return QueryPlan(_merge_probes(plan.probes, extra), plan.counts, plan.literal)
+
+    def _keywords(
+        self,
+        phrases: Sequence[str],
+        *,
+        sources: list[str] | None,
+        doc_ids: Sequence[str] | None,
+    ) -> tuple[dict[str, int], dict[str, Chunk], set[str]]:
+        ranks: dict[str, int] = {}
+        pool: dict[str, Chunk] = {}
+        for phrase in phrases:
+            hits = self._documents.search_fulltext(
+                phrase, limit=self._settings.bm25_k, sources=sources, doc_ids=doc_ids
+            )
+            _keep_best(hits, ranks, pool)
+        return ranks, pool, set(ranks)
+
+    def _counts_into(
+        self,
+        numbers: Sequence[str],
+        ranks: dict[str, int],
+        pool: dict[str, Chunk],
+        *,
+        sources: list[str] | None,
+        doc_ids: Sequence[str] | None,
+    ) -> None:
+        """Pull passages that state the number in, behind any probe hit."""
+        behind = self._settings.bm25_k
+        for number in numbers:
+            hits = self._documents.search_fulltext(
+                number, limit=self._settings.bm25_k, sources=sources, doc_ids=doc_ids
+            )
+            _keep_best(hits, ranks, pool, offset=behind)
+
+    async def _vectors_for(
+        self,
+        phrases: Sequence[str],
+        pool: dict[str, Chunk],
+        from_probe: set[str],
+        *,
+        sources: list[str] | None,
+        doc_ids: Sequence[str] | None,
+    ) -> dict[str, int]:
+        ranks: dict[str, int] = {}
+        if not phrases or not self._documents.stats()["embedded"]:
+            return ranks
+        try:
+            embedded = await self._embedder.embed(list(phrases))
+        except Exception:
+            return ranks  # model host down; keyword results still stand
+        allowed: list[str] | None = None
+        if doc_ids:
+            allowed = []
+            for doc_id in doc_ids:
+                allowed.extend(self._documents.chunk_ids_for(doc_id))
+        for vector in embedded:
+            if allowed is not None:
+                hits = self._vectors.search_among(vector, allowed, limit=self._settings.vector_k)
+            else:
+                hits = self._vectors.search(vector, limit=self._settings.vector_k)
+            missing = [hit.chunk_id for hit in hits if hit.chunk_id not in pool]
+            loaded = self._documents.chunks_by_id(missing)
+            for rank, hit in enumerate(hits, start=1):
+                chunk = pool.get(hit.chunk_id) or loaded.get(hit.chunk_id)
+                if chunk is None:
+                    continue
+                if sources and chunk.doc_id.split(":", 1)[0] not in sources:
+                    continue
+                pool.setdefault(chunk.id, chunk)
+                from_probe.add(chunk.id)
+                current = ranks.get(chunk.id)
+                if current is None or rank < current:
+                    ranks[chunk.id] = rank
+        return ranks
 
 
 def _order_with_anchor(
@@ -169,6 +248,47 @@ def _diversify(fused: list[Retrieved], wanted: int, per_doc: int) -> list[Retrie
             return picked
     picked.extend(overflow[: wanted - len(picked)])
     return picked
+
+
+def _merge_probes(base: tuple[str, ...], extra: tuple[str, ...]) -> tuple[str, ...]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for probe in (*base, *extra):
+        key = " ".join(probe.split()).casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(" ".join(probe.split()))
+        if len(merged) == 4:
+            break
+    return tuple(merged)
+
+
+def _keep_best(
+    hits: Sequence[ScoredChunk],
+    ranks: dict[str, int],
+    pool: dict[str, Chunk],
+    *,
+    offset: int = 0,
+) -> None:
+    for rank, hit in enumerate(hits, start=1):
+        pool.setdefault(hit.chunk.id, hit.chunk)
+        position = offset + rank
+        current = ranks.get(hit.chunk.id)
+        if current is None or position < current:
+            ranks[hit.chunk.id] = position
+
+
+def _tier(item: Retrieved, plan: QueryPlan, from_probe: set[str]) -> int:
+    """Probe hits that also state the count, then other probe hits, then the count alone."""
+    if not plan.counts or plan.literal is not None:
+        return 0
+    stated = contains_count(item.chunk.text, plan.counts)
+    if item.chunk.id in from_probe and stated:
+        return 0
+    if item.chunk.id in from_probe:
+        return 1
+    return 2
 
 
 def _rrf(rank: int | None, k: int) -> float:

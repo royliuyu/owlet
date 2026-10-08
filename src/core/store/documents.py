@@ -186,6 +186,22 @@ class DocumentStore:
             )
         return [row["id"] for row in rows]
 
+    def delete_root(self, root_id: str) -> list[str]:
+        """Remove every document filed under one folder. Returns orphaned chunk ids.
+
+        The folder is the unit that stays gone: a file deleted on its own is
+        still inside an enabled folder, so the next index would write it back.
+        """
+        with self._session() as connection:
+            rows = connection.execute(
+                "SELECT c.id FROM chunks c"
+                " JOIN documents d ON d.id = c.doc_id"
+                " WHERE d.root_id = ?",
+                (root_id,),
+            ).fetchall()
+            connection.execute("DELETE FROM documents WHERE root_id = ?", (root_id,))
+        return [row["id"] for row in rows]
+
     def papers(self) -> list[IndexedDocument]:
         """Every live document, with the stored paper record attached."""
         with self._session() as connection:
@@ -288,7 +304,16 @@ class DocumentStore:
         doc_ids: Sequence[str] | None = None,
     ) -> list[ScoredChunk]:
         """BM25 over chunk text. Returns best-first; score is higher-is-better."""
-        match = _fts_query(query)
+        return self._match(_fts_query(query), limit=limit, sources=sources, doc_ids=doc_ids)
+
+    def _match(
+        self,
+        match: str,
+        *,
+        limit: int,
+        sources: Sequence[str] | None,
+        doc_ids: Sequence[str] | None,
+    ) -> list[ScoredChunk]:
         if not match:
             return []
         sql = (

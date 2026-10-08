@@ -81,6 +81,29 @@ class OllamaClient:
                     vectors.append([float(value) for value in vector])
         return vectors
 
+    async def complete(
+        self,
+        messages: Sequence[dict[str, str]],
+        *,
+        temperature: float = 0.0,
+    ) -> str:
+        """One reply, forced to JSON. Used to rewrite a question, not to answer it."""
+        body = {
+            "model": self._chat_model,
+            "messages": list(messages),
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": temperature, "num_ctx": self._num_ctx},
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            payload = await self._post(client, "/api/chat", body)
+        message = payload.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+        return ""
+
     async def stream_chat(
         self,
         messages: Sequence[dict[str, str]],

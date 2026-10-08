@@ -40,6 +40,11 @@ async def start_index(
     return engine.start_index(force=bool(body and body.force))
 
 
+@router.post("/index/cancel")
+async def cancel_index(engine: Engine = Depends(get_engine)) -> dict[str, object]:
+    return engine.cancel_index()
+
+
 @router.get("/index/status")
 async def index_status(engine: Engine = Depends(get_engine)) -> dict[str, object]:
     return engine.index_status()

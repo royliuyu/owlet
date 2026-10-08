@@ -1,7 +1,7 @@
 """Page 27 of the wrong file must not hide the parts row."""
 
 from core.domain.models import Chunk
-from core.retrieval.phrase import anchors, choose_page
+from core.retrieval.phrase import anchors, choose_page, counts
 
 
 def test_a_named_phrase_is_kept_and_a_model_code_is_not() -> None:
@@ -17,6 +17,14 @@ def test_a_person_in_a_message_is_the_same_kind_of_phrase() -> None:
 
 def test_a_question_with_no_name_does_not_pin_a_phrase() -> None:
     assert anchors("what is it") == ()
+
+
+def test_a_stated_count_is_kept_and_a_page_number_is_not() -> None:
+    asked = "there are 12 readings in one of the papers, which paper is it?"
+
+    assert counts(asked) == ("12",)
+    assert counts("look for it on page 27") == ()
+    assert counts("the code is 126-8195") == ()
 
 
 def test_an_ordinary_phrase_is_kept() -> None:

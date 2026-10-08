@@ -19,7 +19,9 @@ from core.llm import OllamaClient
 from core.retrieval import Retriever
 from core.retrieval.answer import citations_for, stream_answer
 from core.retrieval.hybrid import Retrieved
+from core.retrieval.understand import LlmQueryParser
 from core.store import DocumentStore, IndexedDocument, SourceStore, SqliteVecStore
+from core.store.db import reclaim_free_space
 from core.store.google_accounts import GoogleAccountStore
 from core.store.tokens import KeyringTokenStore
 
@@ -53,6 +55,7 @@ class Engine:
             vectors=self.vectors,
             embedder=self.llm,
             settings=settings.retrieval,
+            parser=LlmQueryParser(self.llm),
         )
         self.indexer = Indexer(
             documents=self.documents,
@@ -62,6 +65,8 @@ class Engine:
         )
         self._progress: IndexProgress | None = None
         self._task: asyncio.Task[IndexProgress] | None = None
+        self._cancel: asyncio.Event | None = None
+        self._force = False
 
     def connector(self) -> LocalFilesConnector | None:
         records = self.sources.list(enabled_only=True)
@@ -83,6 +88,8 @@ class Engine:
             base.update(self._progress.snapshot())
         elif not self.indexing:
             base["status"] = "idle"
+        if self.indexing:
+            base["force"] = self._force
         return base
 
     def start_index(self, *, force: bool = False) -> dict[str, object]:
@@ -101,10 +108,38 @@ class Engine:
         def remember(progress: IndexProgress) -> None:
             self._progress = progress
 
+        self._force = force
+        self._cancel = asyncio.Event()
         self._task = asyncio.create_task(
-            self.indexer.run(connector, on_progress=remember, force=force)
+            self.indexer.run(
+                connector, on_progress=remember, force=force, cancel=self._cancel
+            )
         )
         return self.index_status()
+
+    def cancel_index(self) -> dict[str, object]:
+        """Stop after the file in progress. Passages already written stay."""
+        if self._cancel is not None and self.indexing:
+            self._cancel.set()
+            if self._progress is not None:
+                self._progress.detail = "Cancelling…"
+        return self.index_status()
+
+    def remove_collection(self, collection_id: str) -> bool:
+        """Drop a folder and the passages and vectors indexed from it.
+
+        The files on disk stay. The folder leaves the source list, so a later
+        index does not scan them back in. Vectors are removed here, without
+        parsing or embedding. Empty pages go back to the disk when they are
+        at least half the file and at least 32 MB.
+        """
+        if self.sources.get(collection_id) is None:
+            return False
+        self.vectors.delete(self.documents.delete_root(collection_id))
+        removed = self.sources.remove(collection_id)
+        if removed:
+            reclaim_free_space(self.settings.db_path)
+        return removed
 
     def citations_for(
         self, hits: Sequence[Retrieved], documents: dict[str, IndexedDocument]

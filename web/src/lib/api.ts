@@ -3,6 +3,7 @@ import type {
   ChatStreamEvent,
   Citation,
   Collection,
+  FolderListing,
   DocumentPreview,
   GoogleAttempt,
   GoogleEvent,
@@ -50,6 +51,11 @@ export async function openSession(token: string): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ token }),
   })
+}
+
+export function browseFolders(path: string): Promise<FolderListing> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return request<FolderListing>(`/api/v1/browse${query}`)
 }
 
 export function listCollections(): Promise<Collection[]> {
@@ -154,6 +160,10 @@ export function startIndex(force = false): Promise<IndexStatus> {
   })
 }
 
+export function cancelIndex(): Promise<IndexStatus> {
+  return request<IndexStatus>('/api/v1/index/cancel', { method: 'POST' })
+}
+
 export function getIndexStatus(): Promise<IndexStatus> {
   return request<IndexStatus>('/api/v1/index/status')
 }
@@ -203,6 +213,7 @@ function headers(): Record<string, string> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
+    cache: 'no-store',
     credentials: 'include',
     headers: { ...headers(), 'Content-Type': 'application/json', ...init?.headers },
   })

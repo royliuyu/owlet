@@ -59,6 +59,28 @@ def test_this_paper_keeps_the_focused_document() -> None:
     assert decision.doc_ids == (AROD.id,)
 
 
+def test_which_paper_searches_the_library_even_when_a_paper_is_focused() -> None:
+    asked = (
+        "there are 12 machine learning models are used in one of the paper, "
+        "which paper is it?"
+    )
+    decision = decide(asked, focus_doc_id=AROD.id, papers=LIBRARY)
+
+    assert decision.kind == "library"
+    assert decision.doc_ids == ()
+
+
+def test_naming_the_paper_still_leaves_the_previous_focus() -> None:
+    decision = decide(
+        "check HADD paper, see if there are 12 models are used",
+        focus_doc_id=AROD.id,
+        papers=LIBRARY,
+    )
+
+    assert decision.kind == "content"
+    assert decision.doc_ids == (HADD.id,)
+
+
 def test_a_content_follow_up_stays_on_the_focused_paper() -> None:
     decision = decide("How does the scheduler work?", focus_doc_id=AROD.id, papers=LIBRARY)
 

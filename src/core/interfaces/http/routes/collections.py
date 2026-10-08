@@ -11,9 +11,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from core.connectors.browse import list_folders
 from core.domain.errors import SourceNotFoundError
 from core.domain.models import SourceKind
-from core.interfaces.http.deps import connector_for, get_sources
+from core.interfaces.http.deps import Engine, connector_for, get_engine, get_sources
 from core.store import SourceRecord, SourceStore
 
 router = APIRouter()
@@ -37,6 +38,17 @@ class CollectionPatch(BaseModel):
     enabled: bool | None = None
 
 
+class BrowseEntry(BaseModel):
+    name: str
+    path: str
+
+
+class BrowseOut(BaseModel):
+    path: str
+    parent: str | None
+    entries: list[BrowseEntry]
+
+
 class LibraryFileOut(BaseModel):
     id: str
     source: SourceKind
@@ -47,6 +59,17 @@ class LibraryFileOut(BaseModel):
     media_type: str
     updated_at: datetime
     content_hash: str
+
+
+@router.get("/browse")
+def browse_folders(path: str = "") -> BrowseOut:
+    """Folders the server can open. An empty path lists the drives."""
+    listing = list_folders(path)
+    return BrowseOut(
+        path=listing.path,
+        parent=listing.parent,
+        entries=[BrowseEntry(name=item.name, path=item.path) for item in listing.entries],
+    )
 
 
 @router.get("/collections")
@@ -79,9 +102,14 @@ async def update_collection(
 @router.delete("/collections/{collection_id}", status_code=204)
 async def remove_collection(
     collection_id: str,
-    store: SourceStore = Depends(get_sources),
+    engine: Engine = Depends(get_engine),
 ) -> Response:
-    if not store.remove(collection_id):
+    if engine.indexing:
+        raise HTTPException(
+            status_code=409,
+            detail="An index run is in progress. Remove the folder after it finishes.",
+        )
+    if not engine.remove_collection(collection_id):
         raise HTTPException(status_code=404, detail="Unknown collection")
     return Response(status_code=204)
 

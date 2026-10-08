@@ -46,6 +46,33 @@ def anchors(text: str) -> tuple[str, ...]:
     return (pool[0],)
 
 
+_COUNT = re.compile(r"(?<!\d)(\d{2,3})(?!\d)")
+_PAGE_NUM = re.compile(r"\b(?:page|pg|p)\.?\s+(\d{1,4})\b", re.IGNORECASE)
+_CODE = re.compile(r"\d+(?:-\d+)+")
+
+
+def counts(text: str) -> tuple[str, ...]:
+    """Numbers the question states, apart from a page or a hyphenated code.
+
+    A quantity is a token of two or three digits. Embeddings barely notice
+    one, so a later pass can require the token itself. No word list is
+    involved: the digits are whatever the question typed.
+    """
+    skip = {match.group(1) for match in _PAGE_NUM.finditer(text)}
+    found: list[str] = []
+    for match in _COUNT.finditer(_CODE.sub(" ", text)):
+        number = match.group(1)
+        if number in skip or number in found:
+            continue
+        found.append(number)
+    return tuple(found)
+
+
+def contains_count(text: str, numbers: Sequence[str]) -> bool:
+    folded = text.casefold()
+    return any(re.search(rf"(?<!\d){re.escape(number)}(?!\d)", folded) for number in numbers)
+
+
 def probes(needles: Sequence[str]) -> tuple[str, ...]:
     """One rare token per phrase, for a substring prefilter."""
     found: list[str] = []
@@ -125,8 +152,9 @@ def _phrase_in(text: str, phrase: str) -> bool:
     words = [word.casefold() for word in _WORD.findall(phrase)]
     if not words:
         return False
+    folded = text.casefold()
     pattern = r"\b" + r"\W+".join(re.escape(word) for word in words)
-    return re.search(pattern, text.casefold()) is not None
+    return re.search(pattern, folded) is not None
 
 
 def _unique(chunks: Iterable[Chunk]) -> list[Chunk]:

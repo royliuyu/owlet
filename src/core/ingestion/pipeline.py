@@ -1,11 +1,12 @@
 """Build the index: connector → parse → chunk → store → embed.
 
-Incremental on two keys. A document is re-parsed when its content hash
-moves, and re-chunked when the chunking version moves; either way the
-old chunks and their vectors go first, so a run never leaves a document
-half-described by two layouts. Embedding is a separate pass over
-whatever has no vector from the current model, which makes a run
-interrupted midway safe to repeat.
+Incremental on the content hash. A new or edited file is re-parsed, and
+its old chunks and vectors go first, so a run never leaves a document
+half-described by two layouts. A new chunking layout is not an edit:
+"Index new and changed files" leaves those passages in place, and
+"Rebuild everything" is what applies the new layout. Embedding is a
+separate pass over whatever has no vector from the current model, which
+makes a run interrupted midway safe to repeat.
 """
 
 from __future__ import annotations
@@ -85,6 +86,7 @@ class Indexer:
         *,
         on_progress: ProgressHook | None = None,
         force: bool = False,
+        cancel: asyncio.Event | None = None,
     ) -> IndexProgress:
         progress = IndexProgress(run_id=uuid.uuid4().hex)
         version = layout_version(self._chunking)
@@ -107,13 +109,16 @@ class Indexer:
                 progress.detail = f"Removed {len(stale)} document(s) no longer on disk"
                 tick()
 
+            stopped = False
             for document in current:
+                if _stopped(cancel):
+                    stopped = True
+                    break
                 prior = known.get(document.id)
-                unchanged = (
-                    prior is not None
-                    and prior.content_hash == document.content_hash
-                    and prior.chunking_version == version
-                )
+                # Same bytes stay as they are. A newer parser or chunk
+                # layout is applied only by a forced rebuild, so this
+                # button cannot rewrite the library after a version bump.
+                unchanged = prior is not None and prior.content_hash == document.content_hash
                 if unchanged and not force:
                     if await self._fill_bibliography(connector, document):
                         progress.detail = "Recorded paper details"
@@ -130,8 +135,14 @@ class Indexer:
                 progress.chunks_written += written
                 tick()
 
-            progress.chunks_embedded = await self._embed_pending(progress, tick)
-            progress.status = "ok" if not progress.failures else "partial"
+            if stopped:
+                _mark_cancelled(progress)
+            else:
+                progress.chunks_embedded = await self._embed_pending(progress, tick, cancel)
+                if _stopped(cancel):
+                    _mark_cancelled(progress)
+                else:
+                    progress.status = "ok" if not progress.failures else "partial"
         except Exception as exc:  # surfaced to the UI rather than lost in a task
             progress.status = "error"
             progress.detail = str(exc)
@@ -194,13 +205,20 @@ class Indexer:
             return None
         return await asyncio.to_thread(read_bibliography, content)
 
-    async def _embed_pending(self, progress: IndexProgress, tick: Callable[[], None]) -> int:
+    async def _embed_pending(
+        self,
+        progress: IndexProgress,
+        tick: Callable[[], None],
+        cancel: asyncio.Event | None,
+    ) -> int:
         pending = self._pending_chunk_ids()
         if not pending:
             return 0
         done = 0
         batch = 64
         for start in range(0, len(pending), batch):
+            if _stopped(cancel):
+                return done
             window = pending[start : start + batch]
             chunks = self._documents.chunks_by_id(window)
             ordered = [chunks[chunk_id] for chunk_id in window if chunk_id in chunks]
@@ -219,6 +237,17 @@ class Indexer:
         for doc_id in everything:
             ids.extend(self._documents.chunk_ids_for(doc_id))
         return self._vectors.missing(ids)
+
+
+def _stopped(cancel: asyncio.Event | None) -> bool:
+    return cancel is not None and cancel.is_set()
+
+
+def _mark_cancelled(progress: IndexProgress) -> None:
+    progress.status = "cancelled"
+    progress.detail = (
+        "Indexing was cancelled. Passages already written stay in the index."
+    )
 
 
 def summarize(runs: Sequence[IndexProgress]) -> dict[str, object]:

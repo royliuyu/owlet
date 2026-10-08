@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, getIndexStatus, startIndex } from '@/lib/api'
+import { ApiError, cancelIndex, getIndexStatus, startIndex } from '@/lib/api'
 import type { IndexStatus } from '@/lib/types'
 
 const POLL_MS = 1500
 
 /** Reading a folder is instant; making it searchable is not, so this reports. */
-export function IndexPanel() {
+export function IndexPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [status, setStatus] = useState<IndexStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [cancelling, setCancelling] = useState(false)
   const timer = useRef<number | null>(null)
 
   const refresh = useCallback(() => {
     getIndexStatus()
       .then((next) => {
         setStatus(next)
+        if (!next.running) setCancelling(false)
         setError(null)
       })
       .catch((reason: unknown) => {
@@ -23,7 +25,7 @@ export function IndexPanel() {
 
   useEffect(() => {
     refresh()
-  }, [refresh])
+  }, [refresh, refreshKey])
 
   useEffect(() => {
     if (!status?.running) {
@@ -35,6 +37,17 @@ export function IndexPanel() {
       if (timer.current) window.clearTimeout(timer.current)
     }
   }, [status, refresh])
+
+  function stop() {
+    setCancelling(true)
+    setError(null)
+    cancelIndex()
+      .then(setStatus)
+      .catch((reason: unknown) => {
+        setCancelling(false)
+        setError(reason instanceof ApiError ? reason.message : 'Could not cancel indexing')
+      })
+  }
 
   function build(force: boolean) {
     setError(null)
@@ -78,16 +91,30 @@ export function IndexPanel() {
           onClick={() => build(false)}
           className="rounded-full bg-ink px-4 py-2 text-sm text-paper disabled:opacity-40"
         >
-          {running ? 'Indexing…' : 'Index new and changed files'}
+          {running
+            ? status?.force
+              ? 'Rebuilding…'
+              : 'Indexing…'
+            : 'Index new and changed files'}
         </button>
-        <button
-          type="button"
-          disabled={running}
-          onClick={() => build(true)}
-          className="rounded-full border border-line px-4 py-2 text-sm disabled:opacity-40"
-        >
-          Rebuild everything
-        </button>
+        {running ? (
+          <button
+            type="button"
+            disabled={cancelling}
+            onClick={stop}
+            className="rounded-full border border-line px-4 py-2 text-sm disabled:opacity-40"
+          >
+            {cancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => build(true)}
+            className="rounded-full border border-line px-4 py-2 text-sm"
+          >
+            Rebuild everything
+          </button>
+        )}
       </div>
     </div>
   )
@@ -96,11 +123,12 @@ export function IndexPanel() {
 function Progress({ status }: { status: IndexStatus | null }) {
   if (!status) return null
   const seen = status.documents_seen ?? 0
-  const done = (status.documents_indexed ?? 0) + (status.documents_skipped ?? 0)
+  const updated = status.documents_indexed ?? 0
+  const unchanged = status.documents_skipped ?? 0
   return (
     <p className="text-sm text-muted">
-      {done} of {seen} documents, {status.chunks_written ?? 0} passages written,{' '}
-      {status.chunks_embedded ?? 0} embedded.
+      {updated} updated, {unchanged} unchanged, of {seen}. {status.chunks_written ?? 0} passages
+      written, {status.chunks_embedded ?? 0} embedded.
     </p>
   )
 }

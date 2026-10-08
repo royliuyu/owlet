@@ -13,12 +13,19 @@ one module and never destroys text.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import sqlite_vec
+
+# Empty pages stay in the file until it is rewritten. A folder removal is
+# worth that rewrite when they are at least half the file and at least 32 MB.
+FREE_BYTES_FLOOR = 32 * 1024 * 1024
+
+logger = logging.getLogger("uvicorn.error")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -231,6 +238,57 @@ def _ensure_google_account_email(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE google_client ADD COLUMN account_email TEXT NOT NULL DEFAULT ''"
         )
+
+
+def free_space_worth_reclaiming(
+    *,
+    page_size: int,
+    page_count: int,
+    freelist: int,
+    floor_bytes: int = FREE_BYTES_FLOOR,
+) -> bool:
+    """True when empty pages are at least half the file and past the floor."""
+    if page_size <= 0 or page_count <= 0 or freelist <= 0:
+        return False
+    if freelist * 2 < page_count:
+        return False
+    return freelist * page_size >= floor_bytes
+
+
+def reclaim_free_space(path: Path, *, floor_bytes: int = FREE_BYTES_FLOOR) -> bool:
+    """Rewrite the file so empty pages go back to the disk.
+
+    A quiet miss, including a file another connection still holds, leaves the
+    rows as they are. The next folder removal tries again.
+    """
+    connection = sqlite3.connect(path, timeout=15.0, isolation_level=None)
+    try:
+        connection.enable_load_extension(True)
+        sqlite_vec.load(connection)
+        connection.enable_load_extension(False)
+        page_size, page_count, freelist = _pages(connection)
+        if not free_space_worth_reclaiming(
+            page_size=page_size,
+            page_count=page_count,
+            freelist=freelist,
+            floor_bytes=floor_bytes,
+        ):
+            return False
+        try:
+            connection.execute("VACUUM")
+        except sqlite3.OperationalError as exc:
+            logger.warning("Index file kept its empty pages: %s", exc)
+            return False
+        return True
+    finally:
+        connection.close()
+
+
+def _pages(connection: sqlite3.Connection) -> tuple[int, int, int]:
+    page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+    page_count = connection.execute("PRAGMA page_count").fetchone()[0]
+    freelist = connection.execute("PRAGMA freelist_count").fetchone()[0]
+    return int(page_size), int(page_count), int(freelist)
 
 
 def migrate(path: Path, *, embedding_dim: int | None = None) -> None:

@@ -41,6 +41,8 @@ export type Citation = {
 
 export type IndexStatus = {
   running: boolean
+  /** True while this run is rebuilding every file, not only new and changed ones. */
+  force?: boolean
   status?: string
   documents: number
   chunks: number
@@ -99,6 +101,13 @@ export type Collection = {
   label: string
   path: string
   enabled: boolean
+}
+
+/** A directory the server can see. `path` is empty on the Windows drive list. */
+export type FolderListing = {
+  path: string
+  parent: string | null
+  entries: { name: string; path: string }[]
 }
 
 export type GoogleCalendar = {

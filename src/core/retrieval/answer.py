@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Sequence
 from core.domain.models import Chunk, Citation
 from core.llm.ollama import OllamaClient
 from core.retrieval.hybrid import Retrieved
+from core.retrieval.phrase import anchors
 from core.store import IndexedDocument
 
 SYSTEM_PROMPT = """You answer questions about the user's own library of papers and notes.
@@ -93,10 +94,22 @@ async def stream_answer(
         yield piece
 
 
+def carried_prior(question: str, prior: str | None) -> str | None:
+    """The earlier question, when this turn only points back at it.
+
+    """
+    earlier = (prior or "").strip()
+    if not earlier or earlier == question.strip():
+        return None
+    if anchors(question):
+        return None
+    return earlier
+
+
 def _asked(question: str, prior_question: str | None) -> str:
     """A follow-up such as "look on page 27" still carries the earlier question."""
-    earlier = (prior_question or "").strip()
-    if not earlier or earlier == question.strip():
+    earlier = carried_prior(question, prior_question)
+    if not earlier:
         return question
     return f"{earlier}\nFollow-up: {question}"
 

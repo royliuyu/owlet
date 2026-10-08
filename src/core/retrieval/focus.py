@@ -49,6 +49,14 @@ _FIELDS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 _LEAD = re.compile(r"[A-Za-z0-9]+")
 _PAGE = re.compile(r"\b(?:page|pg|p)\.?\s+(\d{1,4})\b", re.IGNORECASE)
+# "Which paper uses 12 models" is a library lookup. The document cited on
+# the previous turn is the wrong place to search, and it stays wrong until
+# the title is typed.
+_IDENTIFY = re.compile(
+    r"\b(?:which|what)\s+(?:paper|article|document|file)\b"
+    r"|\b(?:one|some)\s+of\s+(?:the\s+)?(?:papers?|articles?|documents?|files?)\b",
+    re.IGNORECASE,
+)
 # o/0 and l/i/1 are the swaps that show up when a model code is typed by hand.
 _FOLD = str.maketrans({"o": "0", "l": "1", "i": "1"})
 
@@ -97,6 +105,8 @@ def decide(
             return Decision("content", scope, page=page)
     if family:
         return Decision("content", tuple(paper.id for paper in family))
+    if _IDENTIFY.search(question) and not named and field is None:
+        return Decision("library", ())
 
     target = _target(named, focus)
     if field and target:

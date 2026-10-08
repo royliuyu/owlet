@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from core.domain.chat import ChatRequest
 from core.domain.models import Chunk
 from core.interfaces.http.deps import Engine, get_engine
-from core.retrieval.answer import citation_for_document
+from core.retrieval.answer import carried_prior, citation_for_document
 from core.retrieval.focus import decide, metadata_answer
 from core.retrieval.hybrid import Retrieved
 from core.retrieval.phrase import anchors, choose_page, contains_anchor, matching, probes
@@ -57,7 +57,8 @@ async def chat(body: ChatRequest, engine: Engine = Depends(get_engine)) -> Strea
                     if frame.startswith("event: done"):
                         return
             scope = list(decision.doc_ids) or None
-            needles = anchors(f"{body.prior_question or ''}\n{body.question}")
+            asked = _search_question(body.question, body.prior_question)
+            needles = anchors(asked)
             yield _frame("tool", {"tool": "search_knowledge", "status": "running"})
             if decision.page and scope:
                 hits = _hits_for_page(
@@ -69,7 +70,7 @@ async def chat(body: ChatRequest, engine: Engine = Depends(get_engine)) -> Strea
                 )
             else:
                 hits = await engine.retriever.search(
-                    _search_question(body.question, body.prior_question),
+                    asked,
                     sources=list(body.sources) if body.sources else None,
                     doc_ids=scope,
                 )
@@ -132,8 +133,8 @@ async def _from_records(
 
 def _search_question(question: str, prior: str | None) -> str:
     """A follow-up such as "search it again" still retrieves the earlier part name."""
-    earlier = (prior or "").strip()
-    if not earlier or earlier == question.strip():
+    earlier = carried_prior(question, prior)
+    if not earlier:
         return question
     return f"{earlier}\n{question}"
 

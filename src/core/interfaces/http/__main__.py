@@ -5,6 +5,7 @@ from __future__ import annotations
 import uvicorn
 
 from core.config import load_settings
+from core.interfaces.http.log import log_config
 
 
 def main() -> None:
@@ -13,6 +14,7 @@ def main() -> None:
         "core.interfaces.http.app:app",
         host=settings.host,
         port=settings.port,
+        log_config=log_config(),
     )
 
 
